@@ -68,7 +68,8 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     private weak var app: ReaderWindowOwner?
     private let strip = TabStripView()
-    private let stripBar = NSTitlebarAccessoryViewController()
+    // Holds the tabs' views, below the strip when it shows.
+    private let tabArea = NSView()
     private let outlineButton = NSButton()
 
     init(preferences: ReaderPreferences, app: ReaderWindowOwner) {
@@ -84,17 +85,21 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         // The strip below the toolbar replaces the system's window tabs.
         window.tabbingMode = .disallowed
         window.delegate = self
-        window.contentView = NSView()
+        // The strip sits at the top of the content rather than in the title bar, where
+        // AppKit draws a separator line over accessories that only its own tab bar can hide.
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 820, height: 720))
+        window.contentView = content
+        tabArea.frame = content.bounds
+        tabArea.autoresizingMask = [.width, .height]
+        strip.frame = NSRect(x: 0, y: content.bounds.height - TabStripView.height, width: content.bounds.width, height: TabStripView.height)
+        strip.autoresizingMask = [.width, .minYMargin]
+        content.addSubview(tabArea)
+        content.addSubview(strip)
         let toolbar = NSToolbar(identifier: "ReaderToolbar")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         window.toolbar = toolbar
         strip.controller = self
-        stripBar.view = strip
-        stripBar.layoutAttribute = .bottom
-        // Keeps the strip's own height instead of the system's tab bar metrics.
-        stripBar.automaticallyAdjustsSize = false
-        window.addTitlebarAccessoryViewController(stripBar)
         window.center()
         // Restores the saved frame when there is one, so it must come after center().
         window.setFrameAutosaveName("ReaderWindow")
@@ -110,6 +115,10 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     // The recent list may have changed while another window was in front.
     func windowDidBecomeKey(_ notification: Notification) { selectedTab?.refreshWelcome() }
+
+    // Tab titles dim while another window is in front.
+    func windowDidBecomeMain(_ notification: Notification) { strip.reload() }
+    func windowDidResignMain(_ notification: Notification) { strip.reload() }
 
     // Menu and toolbar commands this controller does not handle go to the shown tab.
     override func supplementalTarget(forAction action: Selector, sender: Any?) -> Any? {
@@ -185,11 +194,10 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     }
 
     private func attach(_ tab: ReaderTab) {
-        guard let content = window?.contentView else { return }
         tab.view.isHidden = true
-        tab.view.frame = content.bounds
+        tab.view.frame = tabArea.bounds
         tab.view.autoresizingMask = [.width, .height]
-        content.addSubview(tab.view)
+        tabArea.addSubview(tab.view)
         tab.changed = { [weak self, weak tab] in
             guard let self, let tab else { return }
             updateTabBar()
@@ -231,11 +239,13 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         window.toolbar?.validateVisibleItems()
     }
 
-
     // While a tab is dragged, every window shows its strip so it can take the drop.
     // The strip is shown before it reloads, so it lays out at its real width.
     func updateTabBar() {
-        stripBar.isHidden = !(preferences.showsTabBar || tabs.count > 1 || tabs.contains { $0.group != nil } || TabStripView.isDragging)
+        strip.isHidden = !(preferences.showsTabBar || tabs.count > 1 || tabs.contains { $0.group != nil } || TabStripView.isDragging)
+        if let content = window?.contentView {
+            tabArea.frame = NSRect(x: 0, y: 0, width: content.bounds.width, height: content.bounds.height - (strip.isHidden ? 0 : TabStripView.height))
+        }
         strip.reload()
     }
 

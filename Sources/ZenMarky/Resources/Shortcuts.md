@@ -31,7 +31,7 @@
 | Group a tab | Right-click the tab, then Add Tab to New Group |
 | Collapse or expand a group | Click its chip |
 | Rename, recolor, or close a group | Right-click its chip |
-| Move a tab or a whole group | Drag the tab or the chip; drop it on another window's tab bar, or outside every window for a new window |
+| Move a tab or a whole group | Drag the tab or the chip along the tab bar; pull it away from the bar to drop it on another window's tab bar, or outside every window for a new window |
 | Close a tab | Middle-click it |
 | Check or uncheck a task | Click the box |
 | Copy a code block | Hover over it, then click the copy button |
