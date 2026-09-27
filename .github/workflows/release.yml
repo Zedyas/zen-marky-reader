@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check release tag
+        shell: zsh
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ '^v[0-9]+\.[0-9]+\.[0-9]+$' ]]; then
+            print -u2 'Use a tag like v1.0.0.'
+            exit 1
+          fi
+          git merge-base --is-ancestor HEAD origin/master
+
+      - name: Build universal app
+        shell: zsh
+        run: APP_VERSION="${GITHUB_REF_NAME#v}" ./scripts/build-app.sh --universal
+
+      - name: Package app
+        shell: zsh
+        run: |
+          cd dist
+          archive="Zen-Marky-Reader-${GITHUB_REF_NAME#v}-macOS-universal.zip"
+          ditto -c -k --keepParent 'Zen Marky Reader.app' "$archive"
+          unzip -tq "$archive"
+          shasum -a 256 "$archive" > "$archive.sha256"
+
+      - name: Publish GitHub release
+        shell: zsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          archive="dist/Zen-Marky-Reader-${version}-macOS-universal.zip"
+          notes="$RUNNER_TEMP/release-notes.md"
+          cat > "$notes" <<'EOF'
+          Download the universal macOS ZIP below, unzip it, and move `Zen Marky Reader.app` to Applications. Requires macOS 14 or later.
+
+          This build is not notarized. If macOS blocks it, follow the [install instructions](https://github.com/Zedyas/zen-marky-reader#install).
+          EOF
+          gh release create "$GITHUB_REF_NAME" "$archive" "$archive.sha256" --verify-tag --title "Zen Marky Reader $version" --notes-file "$notes"

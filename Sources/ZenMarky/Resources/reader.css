@@ -1,0 +1,114 @@
+:root {
+  color-scheme: light dark;
+  --ink: #292a2d; --muted: #777a82; --line: #e0e1e6; --link: #0068d9;
+  --code: #f1f2f5; --code-border: #dfe1e7;
+  --quote: #f5f6f8; --quote-ink: #555a64; --quote-rule: #aeb5c1;
+  --table-header: #eeeff3; --table-stripe: #f8f9fb;
+}
+* { box-sizing: border-box; }
+html { background: transparent; }
+/* Type grows a little with the window so lines stay near 90 characters as the column widens. */
+body { margin: 0; color: var(--ink); font: 16px/1.75 -apple-system, BlinkMacSystemFont, sans-serif; font-size: clamp(16px, 0.75vw + 9px, 19px); -webkit-font-smoothing: antialiased; overflow-wrap: anywhere; hanging-punctuation: first; }
+/* The column grows with the window up to a cap, so wide tables and code get room on large screens. */
+main { max-width: 1120px; margin: 0 auto; padding: 46px clamp(28px, 6vw, 72px) 80px; }
+h1, h2, h3, h4, h5, h6 { line-height: 1.3; font-weight: 650; scroll-margin-top: 24px; text-wrap: balance; }
+h1 { font-size: 2.1em; letter-spacing: -0.03em; margin: 0 0 0.7em; }
+h2 { font-size: 1.55em; letter-spacing: -0.02em; margin: 1.8em 0 0.7em; }
+h3 { font-size: 1.25em; letter-spacing: -0.01em; margin: 1.6em 0 0.7em; }
+h4 { font-size: 1.05em; margin: 1.6em 0 0.6em; }
+h5 { font-size: 0.95em; margin: 1.6em 0 0.6em; }
+h6 { font-size: 0.875em; font-weight: 600; color: var(--muted); margin: 1.6em 0 0.6em; }
+main > :first-child { margin-top: 0; }
+p, ul, ol, blockquote, pre, .table-scroll { margin: 0 0 1.35em; }
+p, li, blockquote { text-wrap: pretty; }
+a { color: var(--link); text-decoration: underline; text-underline-offset: 3px; }
+a:hover { text-decoration-thickness: 2px; }
+a:focus-visible { outline: 2px solid var(--link); outline-offset: 4px; border-radius: 2px; }
+ul, ol { padding-left: 26px; }
+ul { list-style-type: disc; }
+ul ul { list-style-type: circle; }
+ul ul ul { list-style-type: square; }
+ol { list-style-type: decimal; }
+li::marker { color: var(--ink); }
+li { padding-left: 3px; margin: 5px 0; }
+li > p { margin-bottom: 8px; }
+li > ul, li > ol { margin-bottom: 8px; }
+blockquote { border-left: 3px solid var(--quote-rule); border-radius: 0 8px 8px 0; margin-left: 0; margin-right: 0; padding: 14px 18px; color: var(--quote-ink); background: var(--quote); }
+blockquote p:last-child { margin-bottom: 0; }
+code { font: .84em/1.65 "SFMono-Regular", Menlo, monospace; background: var(--code); border: 1px solid var(--code-border); padding: 2px 6px; border-radius: 5px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+pre { background: var(--code); border: 1px solid var(--code-border); border-radius: 9px; padding: 18px 20px; overflow-x: auto; }
+pre code { padding: 0; background: none; border: 0; border-radius: 0; overflow-wrap: normal; }
+.table-scroll { max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; }
+.table-scroll:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
+/* Sized to content inside the scroll wrapper: short values stay on one line, long cells wrap. */
+table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.875em; line-height: 1.55; font-variant-numeric: tabular-nums; overflow-wrap: normal; }
+th, td { max-width: 36ch; padding: 12px 16px; text-align: left; vertical-align: top; }
+th { font-weight: 650; background: var(--table-header); border-bottom: 1px solid var(--line); }
+tbody tr + tr td { border-top: 1px solid var(--line); }
+tbody tr:nth-child(even) { background: var(--table-stripe); }
+hr { border: 0; border-top: 1px solid var(--line); margin: 32px 0; }
+img { max-width: 100%; height: auto; border-radius: 7px; }
+.task-item { list-style: none; margin-left: -22px; }
+.task-toggle { display: inline-block; width: 15px; height: 15px; margin: 0 8px 0 0; vertical-align: -2px; border: 1px solid var(--quote-rule); border-radius: 4px; background: var(--code); }
+.task-toggle:hover { border-color: var(--link); }
+.task-toggle[aria-checked=true] { border-color: var(--link); background: var(--link) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.3l2.4 2.4 4.6-5' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 11px no-repeat; }
+.empty-document { color: var(--muted); text-align: center; padding-top: 100px; }
+/* Front matter: one quiet line of key and value pairs above the document. */
+/* Hidden unless View > Show Front Matter is on. */
+.front-matter { display: none; }
+.show-front-matter .front-matter { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0 0 2.2em; font: 0.8em/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--muted); }
+.front-matter div { display: flex; gap: 6px; }
+.front-matter dt { font-weight: 600; }
+.front-matter dd { margin: 0; }
+/* Copy button: shown while the pointer is over a code block. Icons are Lucide copy and check. */
+.code-block { position: relative; }
+.code-copy { position: absolute; top: 9px; right: 9px; width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--code-border); background: var(--code); opacity: 0; transition: opacity .15s; }
+.code-copy::before { content: ""; position: absolute; inset: 0; background: var(--muted); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='14' height='14' x='8' y='8' rx='2' ry='2'/%3E%3Cpath d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/%3E%3C/svg%3E") center / 14px no-repeat; }
+.code-block:hover .code-copy, .code-copy:focus-visible, .code-block.copied .code-copy { opacity: 1; }
+.code-copy:hover::before { background: var(--ink); }
+.code-block.copied .code-copy::before { background: var(--link); -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E"); }
+/* Mermaid source until the app draws it, then the drawing centered without the code frame. */
+pre.mermaid { font-size: 0.8em; }
+pre.mermaid[data-processed] { background: none; border: 0; padding: 0; text-align: center; overflow-x: auto; }
+body.book {
+  font-family: "Iowan Old Style", "Palatino", Georgia, serif; font-size: clamp(18px, 0.75vw + 11px, 21px); line-height: 1.8; background: #fcfaf6; min-height: 100vh;
+  --line: #e2ded6; --code: #f1eee8; --code-border: #ded9cf;
+  --quote: #f3f0e9; --quote-ink: #605b52; --quote-rule: #b7ad9b;
+  --table-header: #eeebe3; --table-stripe: #f6f3ed;
+}
+.book h1 { font-size: 2.2em; font-weight: 500; }
+.book h2, .book h3 { font-weight: 600; }
+.book table { font-size: 0.9em; }
+::selection { background: #007aff30; }
+@media screen and (prefers-color-scheme: dark) {
+  :root {
+    --ink: #dedee3; --muted: #999ba4; --line: #42434b; --link: #6bb1ff;
+    --code: #2b2c33; --code-border: #444650;
+    --quote: #292a30; --quote-ink: #c2c4cd; --quote-rule: #727986;
+    --table-header: #33343c; --table-stripe: #26272e;
+  }
+  body.book {
+    background: #242320; --ink: #e5e0d6; --line: #49453d;
+    --code: #302e28; --code-border: #4b463c;
+    --quote: #2f2c26; --quote-ink: #cec6b8; --quote-rule: #8b806c;
+    --table-header: #39352d; --table-stripe: #2b2823;
+  }
+}
+@media (max-width: 520px) { main { padding: 30px 24px 50px; } h1 { font-size: 1.8em; } }
+/* Printing and PDF export: light colors, the full page width, and nothing cut off at the edges. */
+@media print {
+  :root { color-scheme: light; }
+  body, body.book { background: none; font-size: 11pt; min-height: 0; }
+  body.book { font-size: 12pt; }
+  main { max-width: none; padding: 0; }
+  .code-copy { display: none; }
+  .task-toggle { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  pre { white-space: pre-wrap; overflow: visible; }
+  pre code { overflow-wrap: anywhere; }
+  .table-scroll { overflow: visible; }
+  table { width: 100%; }
+  th, td { max-width: none; }
+  h1, h2, h3, h4, h5, h6 { break-after: avoid; }
+  tr, img, svg, blockquote { break-inside: avoid; }
+  pre.mermaid[data-processed] { overflow: visible; }
+}
