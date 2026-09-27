@@ -196,3 +196,14 @@ struct ReaderSession: Codable, Equatable {
         return kept
     }
 }
+
+// Sessions saved before tab groups have no groups key, so a missing one reads as none.
+extension ReaderSession.Window {
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        files = try container.decode([String].self, forKey: .files)
+        selected = try container.decodeIfPresent(String.self, forKey: .selected)
+        frame = try container.decode(String.self, forKey: .frame)
+        groups = try container.decodeIfPresent([ReaderSession.Group].self, forKey: .groups) ?? []
+    }
+}

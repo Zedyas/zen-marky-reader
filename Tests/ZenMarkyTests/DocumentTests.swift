@@ -199,6 +199,13 @@ struct DocumentTests {
         #expect(PageAction(URL(string: "marky-copy:1")!) == .copyCode(block: 1))
     }
 
+    @Test func testSessionsSavedBeforeTabGroupsStillLoad() throws {
+        let saved = #"{"windows":[{"files":["/a.md"],"selected":"/a.md","frame":"{{0, 0}, {800, 600}}"}],"scrollOffsets":{"/a.md":12}}"#
+        let session = try JSONDecoder().decode(ReaderSession.self, from: Data(saved.utf8))
+        #expect(session.windows == [.init(files: ["/a.md"], selected: "/a.md", frame: "{{0, 0}, {800, 600}}")])
+        #expect(session.scrollOffsets == ["/a.md": 12])
+    }
+
     @Test func testSessionSkipsMissingFilesAndEmptyGroupsAndWindows() {
         let session = ReaderSession(windows: [
             .init(files: ["/a.md", "/gone.md", "/b.md"], selected: "/b.md", frame: "", groups: [

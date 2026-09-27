@@ -131,16 +131,20 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     private var visibleTabs: [ReaderTab] { tabs.filter { $0.group?.collapsed != true } }
 
     // Moves the tabs here from wherever they are, at an index of this window's list
-    // without them. A window left with no tabs closes.
+    // without them. A tab moved within this window stays shown. A window the tabs
+    // leave shows another tab in place of a shown one that left, or closes when empty.
     func insert(_ moving: [ReaderTab], at index: Int) {
-        let sources = Set(moving.compactMap(\.windowController)).subtracting([self])
-        for tab in moving { tab.windowController?.detach(tab) }
+        let shown = selectedTab
+        let sources = Set(moving.compactMap(\.windowController)).map { ($0, $0.remove(moving)) }
         tabs.insert(contentsOf: moving, at: min(index, tabs.count))
         for tab in moving { attach(tab) }
         tabs = StripLayout.keepingGroupsTogether(tabs) { $0.group }
-        if selectedTab == nil, let first = visibleTabs.first ?? tabs.first { select(first) }
-        for source in sources where source.tabs.isEmpty { source.close() }
-        tabsChanged()
+        if let shown, tabs.contains(shown) { select(shown) }
+        for (source, shownIndex) in sources where source !== self {
+            if source.tabs.isEmpty { source.close() } else if let shownIndex { source.showTab(near: shownIndex) }
+        }
+        if selectedTab == nil { showTab(near: index) }
+        updateTabBar()
     }
 
     // Adds a tab at the end, or right after the tab it was opened from and in that tab's group.
@@ -168,16 +172,16 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             tab.refreshWelcome()
         }
         showSelection()
-        tabsChanged()
+        updateTabBar()
     }
 
     // Closes the tabs, and the window when none are left.
     func close(_ closing: [ReaderTab]) {
-        for tab in closing where tabs.contains(tab) {
-            tab.close()
-            detach(tab)
-        }
-        if tabs.isEmpty { close() }
+        for tab in closing where tabs.contains(tab) { tab.close() }
+        let shownIndex = remove(closing)
+        if tabs.isEmpty { close(); return }
+        if let shownIndex { showTab(near: shownIndex) }
+        updateTabBar()
     }
 
     private func attach(_ tab: ReaderTab) {
@@ -188,28 +192,32 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         content.addSubview(tab.view)
         tab.changed = { [weak self, weak tab] in
             guard let self, let tab else { return }
-            tabsChanged()
+            updateTabBar()
             if tab === selectedTab { showSelection() }
         }
     }
 
-    // Takes the tab out of this window without closing it. If it was shown, the
-    // nearest visible tab is shown instead, preferring the right side as Chrome does.
-    private func detach(_ tab: ReaderTab) {
-        guard let index = tabs.firstIndex(of: tab) else { return }
-        tabs.remove(at: index)
-        tab.view.removeFromSuperview()
-        tab.changed = nil
-        if selectedTab === tab {
-            selectedTab = nil
-            if let next = nearestVisibleTab(to: index) ?? tabs.first { select(next) }
+    // Takes those of the tabs that are here out of this window without closing them.
+    // Returns where the shown tab was among the tabs left, if it was one of them.
+    private func remove(_ leaving: [ReaderTab]) -> Int? {
+        let shownIndex = selectedTab.flatMap { shown in
+            leaving.contains(shown) ? tabs.prefix(while: { $0 !== shown }).filter { !leaving.contains($0) }.count : nil
         }
-        tabsChanged()
+        for tab in leaving where tabs.contains(tab) {
+            tabs.removeAll { $0 === tab }
+            tab.view.removeFromSuperview()
+            tab.changed = nil
+        }
+        if shownIndex != nil { selectedTab = nil }
+        return shownIndex
     }
 
-    private func nearestVisibleTab(to index: Int) -> ReaderTab? {
+    // Shows the visible tab nearest the position, preferring the right side as Chrome
+    // does, or a new tab when every tab left is in a collapsed group.
+    private func showTab(near index: Int) {
         let visible = { (tab: ReaderTab) in tab.group?.collapsed != true }
-        return tabs[min(index, tabs.count)...].first(where: visible) ?? tabs[..<min(index, tabs.count)].last(where: visible)
+        let bound = min(index, tabs.count)
+        if let next = tabs[bound...].first(where: visible) ?? tabs[..<bound].last(where: visible) { select(next) } else { addNewTab() }
     }
 
     // The window title, toolbar, and background follow the shown tab.
@@ -223,14 +231,12 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
         window.toolbar?.validateVisibleItems()
     }
 
-    // The strip is shown first, so it lays out at its real width.
-    private func tabsChanged() {
-        updateTabBar()
-        strip.reload()
-    }
 
-    private func updateTabBar() {
-        stripBar.isHidden = !(preferences.showsTabBar || tabs.count > 1 || tabs.contains { $0.group != nil })
+    // While a tab is dragged, every window shows its strip so it can take the drop.
+    // The strip is shown before it reloads, so it lays out at its real width.
+    func updateTabBar() {
+        stripBar.isHidden = !(preferences.showsTabBar || tabs.count > 1 || tabs.contains { $0.group != nil } || TabStripView.isDragging)
+        strip.reload()
     }
 
     // MARK: Groups
@@ -279,15 +285,15 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     func toggle(_ group: TabGroup) {
         group.collapsed.toggle()
         if group.collapsed, let shown = selectedTab, shown.group === group, let index = tabs.firstIndex(of: shown) {
-            if let next = nearestVisibleTab(to: index) { select(next) } else { addNewTab() }
+            showTab(near: index)
         }
-        tabsChanged()
+        updateTabBar()
     }
 
     // A tab that leaves its group's middle moves to just after the group.
     private func regroup() {
         tabs = StripLayout.keepingGroupsTogether(tabs) { $0.group }
-        tabsChanged()
+        updateTabBar()
     }
 
     // MARK: Moving
@@ -299,9 +305,11 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
             tab.group = group
             insert([tab], at: index)
             select(tab)
-        case .group(let group, let members):
+        case .group(_, let members):
+            // The group's shown tab stays shown when the group moves to another window.
+            let shown = members.first { $0 === $0.windowController?.selectedTab }
             insert(members, at: index)
-            if !group.collapsed, let first = members.first { select(first) }
+            if let shown { select(shown) }
         }
         window?.makeKeyAndOrderFront(nil)
     }

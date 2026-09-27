@@ -159,12 +159,18 @@ final class TabStripView: NSView, NSDraggingSource {
     private static let margin: CGFloat = 8
     private static let addWidth: CGFloat = 28
     private static let tabWidths: ClosedRange<CGFloat> = 48...220
-    // The strip a drag started from, kept alive until the drag ends even if its window closes.
-    private static var dragSource: TabStripView?
+    // The drag in progress and the strip it started from, which it keeps alive until
+    // the drag ends even if the strip's window closes.
+    private static var drag: (source: TabStripView, moving: MovingTabs)? {
+        didSet {
+            for window in NSApp.windows { (window.windowController as? ReaderWindowController)?.updateTabBar() }
+        }
+    }
+    static var isDragging: Bool { drag != nil }
 
     weak var controller: ReaderWindowController?
     // What this strip is dragging out, hidden from its layout meanwhile.
-    private var moving: MovingTabs?
+    private var moving: MovingTabs? { Self.drag?.source === self ? Self.drag?.moving : nil }
     // Where a drag hovering over this strip would land; the layout opens a gap there.
     private var drop: Drop?
     // The layout without the gap. Drops are measured against it, so an opening gap
@@ -329,10 +335,8 @@ final class TabStripView: NSView, NSDraggingSource {
         item.setString("tab", forType: Self.pasteboardType)
         let dragging = NSDraggingItem(pasteboardWriter: item)
         dragging.setDraggingFrame(view.bounds, contents: view.snapshot)
-        self.moving = moving
-        Self.dragSource = self
+        Self.drag = (self, moving)
         view.beginDraggingSession(with: [dragging], event: event, source: self).animatesToStartingPositionsOnCancelOrFail = false
-        arrange(animated: true)
     }
 
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
@@ -342,15 +346,15 @@ final class TabStripView: NSView, NSDraggingSource {
     // Released outside every window, the tabs open in a new window there. Released
     // anywhere else but a strip, nothing moves.
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-        DispatchQueue.main.async { Self.dragSource = nil }
-        guard let moving else { return }
-        self.moving = nil
+        // The local copy keeps this strip alive to the end of this method.
+        guard let drag = Self.drag, drag.source === self else { return }
+        Self.drag = nil
+        let moving = drag.moving
         let overWindow = NSApp.windows.contains { $0.windowController is ReaderWindowController && $0.isVisible && $0.frame.contains(screenPoint) }
         if operation.isEmpty, !overWindow {
             // Puts the new window's strip under the pointer.
             controller?.moveToNewWindow(moving, at: NSPoint(x: screenPoint.x - 80, y: screenPoint.y + 64))
         }
-        reload()
     }
 
     // MARK: Dropping in
@@ -358,7 +362,7 @@ final class TabStripView: NSView, NSDraggingSource {
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        guard let source = sender.draggingSource as? TabStripView, let moving = source.moving else { return [] }
+        guard let (source, moving) = Self.drag else { return [] }
         let x = convert(sender.draggingLocation, from: nil).x
         let next: Drop
         switch moving {
@@ -382,7 +386,7 @@ final class TabStripView: NSView, NSDraggingSource {
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        guard let moving = (sender.draggingSource as? TabStripView)?.moving, let drop, let controller else { return false }
+        guard let moving = Self.drag?.moving, let drop, let controller else { return false }
         self.drop = nil
         controller.drop(moving, at: drop.index, in: drop.group)
         return true
