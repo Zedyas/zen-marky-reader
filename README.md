@@ -21,6 +21,7 @@ The app is not notarized yet. If macOS blocks the first launch, try opening it o
 - Open a Markdown or HTML file with **File > Open** (`⌘O`), or drag a file into the app window.
 - Use the **Aa** button in the toolbar to choose Native Reader or Book Reader and set light or dark appearance. The same options are in the **View** menu.
 - In a Markdown task list, click a checkbox to update its marker in the file. Other document text is read-only.
+- Right-click a tab to put it in a group. A group has a colored chip with an optional name: click the chip to collapse the group, right-click it to rename or recolor it, and drag it to move the whole group. Groups reopen with the session.
 - Each file opens in its own tab. **File > Open Files In** switches to new windows instead. `⌘T` and `⌘N` add an empty tab or window, and an empty tab lists your recent files.
 - `⌘F` finds text in the page. The outline button in the toolbar (`⌥⌘O`) jumps to a heading.
 - The page updates when the file changes on disk, so you can keep it open next to your editor. The reload button in the toolbar (`⌘R`) reloads it by hand.

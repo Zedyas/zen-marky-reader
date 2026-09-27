@@ -39,6 +39,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        // ⌃⇥ and ⌃⇧⇥ switch tabs, as they did with the system's tabs. The window uses them
+        // to move keyboard focus before menu shortcuts see them, so they are caught here.
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 48, event.modifierFlags.contains(.control), let front = self?.frontController else { return event }
+            if event.modifierFlags.contains(.shift) { front.previousTab(nil) } else { front.nextTab(nil) }
+            return nil
+        }
         for path in CommandLine.arguments.dropFirst() where !path.hasPrefix("-") {
             open(URL(fileURLWithPath: path))
         }
@@ -340,19 +347,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         // NSWindow has its own actions for these names, so the strip's use different ones.
         add(windows, "Show Previous Tab", #selector(ReaderWindowController.previousTab(_:)), "[", modifiers: [.command, .shift])
         add(windows, "Show Next Tab", #selector(ReaderWindowController.nextTab(_:)), "]", modifiers: [.command, .shift])
-        // ⌃⇥ and ⌃⇧⇥ switch tabs too, and ⌘2–⌘8 select by position, without cluttering the menu.
-        var hidden = [
-            add(windows, "Show Previous Tab", #selector(ReaderWindowController.previousTab(_:)), "\u{19}", modifiers: [.control, .shift]),
-            add(windows, "Show Next Tab", #selector(ReaderWindowController.nextTab(_:)), "\t", modifiers: .control)
-        ]
         for index in 0..<9 {
             let item = add(windows, index == 8 ? "Show Last Tab" : "Show Tab \(index + 1)", #selector(ReaderWindowController.selectTab(_:)), "\(index + 1)")
             item.tag = index
-            if index > 0 && index < 8 { hidden.append(item) }
-        }
-        for item in hidden {
-            item.isHidden = true
-            item.allowsKeyEquivalentWhenHidden = true
+            item.isHidden = index > 0 && index < 8  // ⌘2–⌘8 work without cluttering the menu
         }
         add(windows, "Move Tab to New Window", #selector(ReaderWindowController.detachTab(_:)))
         add(windows, "Merge All Windows", #selector(mergeWindows(_:)))

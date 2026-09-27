@@ -18,7 +18,8 @@ final class TabGroup: Equatable {
 
 // Muted tones that keep chip text readable on the white and paper pages, in light and dark.
 enum GroupColor: String, Codable, CaseIterable {
-    case grey, blue, teal, green, yellow, orange, red, purple
+    // New groups take the first color not in use, so grey comes last.
+    case blue, teal, green, yellow, orange, red, purple, grey
 
     var title: String { rawValue.capitalized }
 
@@ -641,6 +642,8 @@ private final class GroupEditor: NSViewController, NSTextFieldDelegate {
         field.widthAnchor.constraint(equalToConstant: 212).isActive = true
         for view in [separator] + commands { view.widthAnchor.constraint(equalTo: field.widthAnchor).isActive = true }
         view = stack
+        // The popover takes its size from here; without it, it squeezes the stack's margins away.
+        preferredContentSize = stack.fittingSize
     }
 
     override func viewDidAppear() {

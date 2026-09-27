@@ -246,7 +246,7 @@ final class ReaderWindowController: NSWindowController, NSWindowDelegate, NSTool
     // Starts a group with the tab and opens its editor, as Chrome does.
     func newGroup(with tab: ReaderTab) {
         let used = Set(groups.map(\.color))
-        let group = TabGroup(color: GroupColor.allCases.first { !used.contains($0) } ?? .grey)
+        let group = TabGroup(color: GroupColor.allCases.first { !used.contains($0) } ?? .blue)
         tab.group = group
         regroup()
         strip.edit(group)
