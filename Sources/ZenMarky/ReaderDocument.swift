@@ -156,6 +156,15 @@ struct ReaderSession: Codable, Equatable {
         var files: [String]
         var selected: String?
         var frame: String
+        var groups: [Group] = []
+    }
+
+    // A tab group, with its tabs by file. A file is open in one tab at most, so the path names the tab.
+    struct Group: Codable, Equatable {
+        var name: String
+        var color: GroupColor
+        var collapsed: Bool
+        var files: [String]
     }
 
     static let key = "session"
@@ -171,12 +180,17 @@ struct ReaderSession: Codable, Equatable {
         UserDefaults.standard.set(try? JSONEncoder().encode(self), forKey: Self.key)
     }
 
-    // Drops files that no longer exist and the windows left with none.
+    // Drops files that no longer exist and the groups and windows left with none.
     func existing(_ exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> ReaderSession {
         var kept = self
         kept.windows = windows.compactMap { window in
             var window = window
             window.files = window.files.filter(exists)
+            window.groups = window.groups.compactMap { group in
+                var group = group
+                group.files = group.files.filter(exists)
+                return group.files.isEmpty ? nil : group
+            }
             return window.files.isEmpty ? nil : window
         }
         return kept
