@@ -12,10 +12,15 @@ final class DocumentRenderer {
     private let stylesheet: String
 
     // The bundled Resources folder, inside the app bundle or the package's resource bundle.
+    // For this flat bundle, Foundation reports the inner Resources folder as the resource
+    // directory on macOS 14 and 15 but the bundle itself on later versions, so the folder
+    // is found by a file it holds.
     static var resourcesDirectory: URL? {
         let bundledResources = Bundle.main.resourceURL?.appendingPathComponent("ZenMarky_ZenMarky.bundle")
         let bundle = bundledResources.flatMap(Bundle.init(url:)) ?? Bundle.module
-        return bundle.resourceURL?.appendingPathComponent("Resources")
+        let stylesheet = bundle.url(forResource: "reader", withExtension: "css")
+            ?? bundle.url(forResource: "reader", withExtension: "css", subdirectory: "Resources")
+        return stylesheet?.deletingLastPathComponent()
     }
 
     init() throws {
