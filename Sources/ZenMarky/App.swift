@@ -15,7 +15,7 @@ enum ZenMarky {
 
 // Owns the open windows, the shared renderer, and the preferences every window follows.
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation, ReaderWindowOwner {
     private var controllers: [ReaderWindowController] = []
     private var renderer: DocumentRenderer?
     private var preferences = ReaderPreferences() {
@@ -27,14 +27,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     }
     private var quitPending = false
 
+    private var tabs: [ReaderTab] { controllers.flatMap(\.tabs) }
+
     // Runs before Finder hands over files, so those open as tabs next to the restored ones.
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // Tabs live in the app's own strip, so the system's window tabs and their menu items are off.
+        NSWindow.allowsAutomaticWindowTabbing = false
         NSApp.appearance = preferences.appearance
         restoreSession()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        // ⌃⇥ and ⌃⇧⇥ switch tabs, as they did with the system's tabs. The window uses them
+        // to move keyboard focus before menu shortcuts see them, so they are caught here.
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 48, event.modifierFlags.contains(.control), let front = self?.frontController else { return event }
+            if event.modifierFlags.contains(.shift) { front.previousTab(nil) } else { front.nextTab(nil) }
+            return nil
+        }
         for path in CommandLine.arguments.dropFirst() where !path.hasPrefix("-") {
             open(URL(fileURLWithPath: path))
         }
@@ -53,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         quitPending = true
         Task {
-            for controller in controllers { await controller.storeScroll() }
+            for tab in tabs { await tab.storeScroll() }
             finishQuit()
         }
         // The common modes include the one AppKit runs while it waits for the reply.
@@ -69,23 +80,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         NSApp.reply(toApplicationShouldTerminate: true)
     }
 
-    // Records each window's files in tab order, front window first.
+    // Records each window's files and groups in tab order, front window first.
     private func saveSession() {
         let front = NSApp.orderedWindows
-        var saved: [(depth: Int, window: ReaderSession.Window)] = []
+        let depth = { (controller: ReaderWindowController) in controller.window.flatMap(front.firstIndex(of:)) ?? front.count }
         var session = ReaderSession()
-        var seen: Set<NSWindow> = []
-        for window in controllers.compactMap(\.window) where !seen.contains(window) {
-            let tabs = window.tabGroup?.windows ?? [window]
-            seen.formUnion(tabs)
-            let path = { (tab: NSWindow) in (tab.windowController as? ReaderWindowController)?.readerDocument?.url.path }
-            let files = tabs.compactMap(path)
-            guard !files.isEmpty else { continue }
-            let selected = window.tabGroup?.selectedWindow ?? window
-            saved.append((front.firstIndex(of: selected) ?? front.count, ReaderSession.Window(files: files, selected: path(selected), frame: NSStringFromRect(selected.frame))))
-            for file in files { session.scrollOffsets[file] = ReaderWindowController.scrollPositions[URL(fileURLWithPath: file)] }
+        session.windows = controllers.sorted { depth($0) < depth($1) }.compactMap(\.savedWindow)
+        for file in session.windows.flatMap(\.files) {
+            session.scrollOffsets[file] = ReaderTab.scrollPositions[URL(fileURLWithPath: file)]
         }
-        session.windows = saved.sorted { $0.depth < $1.depth }.map(\.window)
         session.save()
     }
 
@@ -94,19 +97,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     private func restoreSession() {
         guard let session = ReaderSession.load()?.existing() else { return }
         for (path, offset) in session.scrollOffsets {
-            ReaderWindowController.scrollPositions[URL(fileURLWithPath: path)] = offset
+            ReaderTab.scrollPositions[URL(fileURLWithPath: path)] = offset
         }
         for saved in session.windows.reversed() {
-            var last: ReaderWindowController?
-            var selected: ReaderWindowController?
-            for path in saved.files {
-                let controller = makeWindow(tabbedWith: last?.window)
-                if last == nil { controller.window?.setFrame(NSRectFromString(saved.frame), display: false) }
-                controller.open(URL(fileURLWithPath: path))
-                if path == saved.selected { selected = controller }
-                last = controller
+            let groups = saved.groups.map { TabGroup(name: $0.name, color: $0.color, collapsed: $0.collapsed) }
+            let tabs = saved.files.map { path in
+                let tab = makeTab()
+                tab.group = saved.groups.firstIndex { $0.files.contains(path) }.map { groups[$0] }
+                return tab
             }
-            (selected ?? last)?.window?.makeKeyAndOrderFront(nil)
+            let controller = makeWindow()
+            controller.window?.setFrame(NSRectFromString(saved.frame), display: false)
+            controller.insert(tabs, at: 0)
+            for (tab, path) in zip(tabs, saved.files) { tab.open(URL(fileURLWithPath: path)) }
+            if let index = saved.files.firstIndex(where: { $0 == saved.selected }) { controller.select(tabs[index]) }
+            controller.window?.makeKeyAndOrderFront(nil)
         }
     }
 
@@ -119,55 +124,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         (NSApp.keyWindow ?? NSApp.mainWindow)?.windowController as? ReaderWindowController
     }
 
-    // Opens the file in the window that asked, a welcome window that is free, or a
-    // new tab or window according to the placement. A file that is already open
-    // is brought to the front instead of being opened twice.
-    func open(_ url: URL, from source: ReaderWindowController? = nil, placement: OpenPlacement = .preferred) {
+    // Opens the file in the tab that asked, an empty tab that is free, or a new tab or
+    // window according to the placement. A file that is already open is brought to the
+    // front instead of being opened twice.
+    func open(_ url: URL, from source: ReaderTab? = nil, placement: OpenPlacement = .preferred) {
         let resolved = url.resolvingSymlinksInPath()
-        if let existing = controllers.first(where: { $0.documentURL == resolved }) {
-            existing.window?.makeKeyAndOrderFront(nil)
+        if let existing = tabs.first(where: { $0.documentURL == resolved }) {
+            show(existing)
             return
         }
         // At launch the app is not active yet, so there is no key window; fall back to the last window made.
-        let source = source ?? frontController ?? controllers.last
-        let target: ReaderWindowController
+        let source = source ?? frontController?.selectedTab ?? controllers.last?.selectedTab
+        let target: ReaderTab
         if placement == .current, let source {
             target = source
         } else if let source, source.documentURL == nil {
             target = source
+        } else if let window = source?.windowController, placement == .tab || (placement == .preferred && preferences.opensInTabs) {
+            target = makeTab()
+            // A link opened in a new tab goes next to its page, in the same group.
+            window.add(target, nextTo: placement == .tab ? source : nil)
         } else {
-            let asTab = placement == .tab || (placement == .preferred && preferences.opensInTabs)
-            target = makeWindow(tabbedWith: asTab ? source?.window : nil)
+            target = makeTab()
+            openWindow(with: [target], topLeft: nil)
         }
         target.open(resolved)
-        target.window?.makeKeyAndOrderFront(nil)
+        show(target)
     }
 
-    @discardableResult
-    private func makeWindow(tabbedWith anchor: NSWindow?) -> ReaderWindowController {
+    private func show(_ tab: ReaderTab) {
+        tab.windowController?.select(tab)
+        tab.windowController?.window?.makeKeyAndOrderFront(nil)
+    }
+
+    func makeTab() -> ReaderTab {
         do {
             if renderer == nil { renderer = try DocumentRenderer() }
         } catch {
             NSAlert(error: error).runModal()
         }
         guard let renderer else { fatalError("The document renderer could not load.") }
-        let controller = ReaderWindowController(renderer: renderer, preferences: preferences)
-        controller.openRequest = { [weak self, weak controller] url, placement in self?.open(url, from: controller, placement: placement) }
-        controller.closed = { [weak self, weak controller] in self?.controllers.removeAll { $0 === controller } }
-        controllers.append(controller)
-        if let anchor, let window = controller.window {
-            anchor.addTabbedWindow(window, ordered: .above)
-        } else if let front = frontController?.window, let window = controller.window {
+        let tab = ReaderTab(renderer: renderer, preferences: preferences)
+        tab.openRequest = { [weak self, weak tab] url, placement in self?.open(url, from: tab, placement: placement) }
+        return tab
+    }
+
+    private func makeWindow() -> ReaderWindowController {
+        let controller = ReaderWindowController(preferences: preferences, app: self)
+        if let front = frontController?.window, let window = controller.window {
             window.cascadeTopLeft(from: front.cascadeTopLeft(from: .zero))
         }
-        controller.showWindow(nil)
+        controllers.append(controller)
         return controller
     }
 
-    @objc func newWindow(_ sender: Any?) { makeWindow(tabbedWith: nil) }
-    @objc func newTab(_ sender: Any?) { makeWindow(tabbedWith: frontController?.window) }
-    // The tab bar's plus button sends this through the responder chain.
-    @objc func newWindowForTab(_ sender: Any?) { newTab(sender) }
+    func openWindow(with tabs: [ReaderTab], topLeft: NSPoint?) {
+        let controller = makeWindow()
+        if let topLeft { controller.window?.setFrameTopLeftPoint(topLeft) }
+        controller.insert(tabs, at: 0)
+        controller.showWindow(nil)
+    }
+
+    func windowClosed(_ controller: ReaderWindowController) {
+        controllers.removeAll { $0 === controller }
+    }
+
+    @objc func newWindow(_ sender: Any?) { openWindow(with: [makeTab()], topLeft: nil) }
+
+    @objc func newTab(_ sender: Any?) {
+        if let front = frontController { front.addNewTab() } else { newWindow(sender) }
+    }
+
+    // Reader windows close their shown tab first; this closes panels such as About.
+    @objc func closeTab(_ sender: Any?) { NSApp.keyWindow?.performClose(sender) }
+
+    // Moves every tab into the front window, groups included.
+    @objc func mergeWindows(_ sender: Any?) {
+        guard let front = frontController else { return }
+        for other in controllers where other !== front { front.insert(other.tabs, at: front.tabs.count) }
+    }
 
     @objc func openDocument(_ sender: Any?) {
         let panel = NSOpenPanel()
@@ -178,18 +213,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         let source = frontController
         let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard response == .OK else { return }
-            for url in panel.urls { self?.open(url, from: source) }
+            for url in panel.urls { self?.open(url, from: source?.selectedTab) }
         }
         if let window = source?.window { panel.beginSheetModal(for: window, completionHandler: finish) } else { finish(panel.runModal()) }
     }
 
     @objc func selectPlacement(_ sender: NSMenuItem) { preferences.opensInTabs = sender.tag == 1 }
-
-    // ⌘1 through ⌘9 select a tab of the front window by position.
-    @objc func selectTab(_ sender: NSMenuItem) {
-        guard let windows = frontController?.window?.tabGroup?.windows, windows.indices.contains(sender.tag) else { return }
-        windows[sender.tag].makeKeyAndOrderFront(nil)
-    }
 
     @objc func openRecent(_ sender: NSMenuItem) {
         if let url = sender.representedObject as? URL { open(url) }
@@ -197,7 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
     @objc func clearRecentDocuments(_ sender: Any?) {
         RecentDocuments.clear()
-        for controller in controllers where controller.readerDocument == nil { controller.refreshWelcome() }
+        for tab in tabs { tab.refreshWelcome() }
     }
 
     // The shortcut list is a bundled Markdown page shown in the reader itself.
@@ -225,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
     @objc func selectReaderStyle(_ sender: NSMenuItem) { preferences.bookStyle = sender.tag == 1 }
     @objc func toggleFrontMatter(_ sender: NSMenuItem) { preferences.showsFrontMatter.toggle() }
+    @objc func toggleShowsTabBar(_ sender: NSMenuItem) { preferences.showsTabBar.toggle() }
 
     @objc func selectAppearance(_ sender: NSMenuItem) {
         guard let mode = sender.representedObject as? String else { return }
@@ -238,6 +268,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         case #selector(selectAppearance(_:)): item.state = item.representedObject as? String == preferences.appearanceMode ? .on : .off
         case #selector(selectPlacement(_:)): item.state = (item.tag == 1) == preferences.opensInTabs ? .on : .off
         case #selector(toggleFrontMatter(_:)): item.state = preferences.showsFrontMatter ? .on : .off
+        case #selector(toggleShowsTabBar(_:)): item.state = preferences.showsTabBar ? .on : .off
+        case #selector(mergeWindows(_:)): return controllers.count > 1
         default: break
         }
         return true
@@ -276,26 +308,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         add(placement, "New Tab", #selector(selectPlacement(_:))).tag = 1
         add(placement, "New Window", #selector(selectPlacement(_:)))
         file.addItem(.separator())
-        add(file, "Reload", #selector(ReaderWindowController.reloadDocument(_:)), "r")
-        add(file, "Show in Finder", #selector(ReaderWindowController.revealDocument(_:)))
+        add(file, "Reload", #selector(ReaderTab.reloadDocument(_:)), "r")
+        add(file, "Show in Finder", #selector(ReaderTab.revealDocument(_:)))
         file.addItem(.separator())
-        add(file, "Export as PDF…", #selector(ReaderWindowController.exportPDF(_:)))
-        add(file, "Print…", #selector(ReaderWindowController.printDocument(_:)), "p")
+        add(file, "Export as PDF…", #selector(ReaderTab.exportPDF(_:)))
+        add(file, "Print…", #selector(ReaderTab.printDocument(_:)), "p")
         file.addItem(.separator())
-        add(file, "Close", #selector(NSWindow.performClose(_:)), "w")
+        add(file, "Close Tab", #selector(closeTab(_:)), "w")
+        add(file, "Close Window", #selector(NSWindow.performClose(_:)), "w", modifiers: [.command, .shift])
         let edit = menu("Edit")
         add(edit, "Copy", #selector(NSText.copy(_:)), "c")
         add(edit, "Select All", #selector(NSText.selectAll(_:)), "a")
         edit.addItem(.separator())
-        add(edit, "Find…", #selector(ReaderWindowController.showFind(_:)), "f")
-        add(edit, "Find Next", #selector(ReaderWindowController.findNext(_:)), "g")
-        add(edit, "Find Previous", #selector(ReaderWindowController.findPrevious(_:)), "g", modifiers: [.command, .shift])
+        add(edit, "Find…", #selector(ReaderTab.showFind(_:)), "f")
+        add(edit, "Find Next", #selector(ReaderTab.findNext(_:)), "g")
+        add(edit, "Find Previous", #selector(ReaderTab.findPrevious(_:)), "g", modifiers: [.command, .shift])
         let view = menu("View")
-        add(view, "Zoom In", #selector(ReaderWindowController.zoomIn(_:)), "=")
-        add(view, "Zoom Out", #selector(ReaderWindowController.zoomOut(_:)), "-")
-        add(view, "Actual Size", #selector(ReaderWindowController.actualSize(_:)), "0")
+        add(view, "Zoom In", #selector(ReaderTab.zoomIn(_:)), "=")
+        add(view, "Zoom Out", #selector(ReaderTab.zoomOut(_:)), "-")
+        add(view, "Actual Size", #selector(ReaderTab.actualSize(_:)), "0")
         view.addItem(.separator())
-        add(view, "Show Outline", #selector(ReaderWindowController.showOutline(_:)), "o", modifiers: [.command, .option])
+        add(view, "Show Outline", #selector(ReaderTab.showOutline(_:)), "o", modifiers: [.command, .option])
         view.addItem(.separator())
         let style = menu("Reader Style", in: view)
         add(style, "Native", #selector(selectReaderStyle(_:)))
@@ -306,21 +339,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         }
         add(view, "Show Front Matter", #selector(toggleFrontMatter(_:)))
         view.addItem(.separator())
-        add(view, "Show Tab Bar", #selector(NSWindow.toggleTabBar(_:)), "t", modifiers: [.command, .shift])
-        add(view, "Show All Tabs", #selector(NSWindow.toggleTabOverview(_:)), "\\", modifiers: [.command, .shift])
+        add(view, "Always Show Tab Bar", #selector(toggleShowsTabBar(_:)), "t", modifiers: [.command, .shift])
         let windows = menu("Window")
         add(windows, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")
         add(windows, "Zoom", #selector(NSWindow.performZoom(_:)))
         windows.addItem(.separator())
-        add(windows, "Show Previous Tab", #selector(NSWindow.selectPreviousTab(_:)), "[", modifiers: [.command, .shift])
-        add(windows, "Show Next Tab", #selector(NSWindow.selectNextTab(_:)), "]", modifiers: [.command, .shift])
+        // NSWindow has its own actions for these names, so the strip's use different ones.
+        add(windows, "Show Previous Tab", #selector(ReaderWindowController.previousTab(_:)), "[", modifiers: [.command, .shift])
+        add(windows, "Show Next Tab", #selector(ReaderWindowController.nextTab(_:)), "]", modifiers: [.command, .shift])
         for index in 0..<9 {
-            let item = add(windows, index == 8 ? "Show Last Tab" : "Show Tab \(index + 1)", #selector(selectTab(_:)), "\(index + 1)")
+            let item = add(windows, index == 8 ? "Show Last Tab" : "Show Tab \(index + 1)", #selector(ReaderWindowController.selectTab(_:)), "\(index + 1)")
             item.tag = index
             item.isHidden = index > 0 && index < 8  // ⌘2–⌘8 work without cluttering the menu
         }
-        add(windows, "Move Tab to New Window", #selector(NSWindow.moveTabToNewWindow(_:)))
-        add(windows, "Merge All Windows", #selector(NSWindow.mergeAllWindows(_:)))
+        add(windows, "Move Tab to New Window", #selector(ReaderWindowController.detachTab(_:)))
+        add(windows, "Merge All Windows", #selector(mergeWindows(_:)))
         windows.addItem(.separator())
         add(windows, "Bring All to Front", #selector(NSApplication.arrangeInFront(_:)))
         NSApp.windowsMenu = windows
