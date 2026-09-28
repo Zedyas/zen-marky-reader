@@ -17,7 +17,7 @@ jobs:
           fetch-depth: 0
 
       - name: Check release tag
-        shell: zsh
+        shell: zsh -e {0}
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ '^v[0-9]+\.[0-9]+\.[0-9]+$' ]]; then
             print -u2 'Use a tag like v1.0.0.'
@@ -26,11 +26,11 @@ jobs:
           git merge-base --is-ancestor HEAD origin/master
 
       - name: Build universal app
-        shell: zsh
+        shell: zsh -e {0}
         run: APP_VERSION="${GITHUB_REF_NAME#v}" ./scripts/build-app.sh --universal
 
       - name: Package app
-        shell: zsh
+        shell: zsh -e {0}
         run: |
           cd dist
           archive="Zen-Marky-Reader-${GITHUB_REF_NAME#v}-macOS-universal.zip"
@@ -39,7 +39,7 @@ jobs:
           shasum -a 256 "$archive" > "$archive.sha256"
 
       - name: Publish GitHub release
-        shell: zsh
+        shell: zsh -e {0}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
